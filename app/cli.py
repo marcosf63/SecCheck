@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -15,6 +14,7 @@ from app.ssh.errors import SSHConnectionError, AuthenticationError
 from app.scanners import QUICK_SCANNERS, DEEP_SCANNERS
 from app.analyzers import run_all_heuristics, calculate_score, get_recommended_actions
 from app.reporters import print_report, to_json, save_json, to_llm_json, save_llm_json
+from app.utils.ssh_config import load_ssh_config
 
 app = typer.Typer(
     name="sec-check",
@@ -27,21 +27,59 @@ err_console = Console(stderr=True)
 
 # ── Opções comuns ──────────────────────────────────────────────────────────────
 
-HostOpt = Annotated[str, typer.Option("--host", "-H", help="Host ou IP do servidor remoto.")]
-UserOpt = Annotated[str, typer.Option("--user", "-u", help="Usuário SSH.")]
-IdentityOpt = Annotated[str, typer.Option("--identity", "-i", help="Caminho da chave privada SSH.")]
-PortOpt = Annotated[int, typer.Option("--port", "-p", help="Porta SSH.", show_default=True)]
-TimeoutOpt = Annotated[int, typer.Option("--timeout", help="Timeout da conexão em segundos.", show_default=True)]
-FormatOpt = Annotated[str, typer.Option("--format", "-f", help="Formato de saída: text | json | llm-json.", show_default=True)]
-OutputOpt = Annotated[str | None, typer.Option("--output", "-o", help="Arquivo de saída (opcional).")]
+HostOpt      = Annotated[str, typer.Option("--host", "-H", help="Host, IP ou alias do ~/.ssh/config.")]
+UserOpt      = Annotated[str | None, typer.Option("--user", "-u", help="Usuário SSH (usa ~/.ssh/config se omitido).")]
+IdentityOpt  = Annotated[str | None, typer.Option("--identity", "-i", help="Chave privada SSH (usa ~/.ssh/config se omitido).")]
+PortOpt      = Annotated[int | None, typer.Option("--port", "-p", help="Porta SSH (usa ~/.ssh/config ou 22 se omitido).")]
+TimeoutOpt   = Annotated[int, typer.Option("--timeout", help="Timeout da conexão em segundos.", show_default=True)]
+FormatOpt    = Annotated[str, typer.Option("--format", "-f", help="Formato de saída: text | json | llm-json.", show_default=True)]
+OutputOpt    = Annotated[str | None, typer.Option("--output", "-o", help="Arquivo de saída (opcional).")]
 
 
-def _build_connection(host: str, user: str, identity: str, port: int, timeout: int) -> SSHConnection:
-    identity_path = Path(identity).expanduser()
+def _build_connection(
+    host: str,
+    user: str | None,
+    identity: str | None,
+    port: int | None,
+    timeout: int,
+) -> SSHConnection:
+    """Resolve parâmetros de conexão mesclando CLI + ~/.ssh/config (CLI tem prioridade)."""
+    cfg = load_ssh_config(host)
+
+    resolved_host     = cfg.hostname or host
+    resolved_user     = user     or cfg.user
+    resolved_port     = port     or cfg.port or 22
+    resolved_identity = identity or cfg.identity_file
+
+    if not resolved_user:
+        err_console.print(
+            "[red]Erro:[/red] Usuário SSH não informado e não encontrado em ~/.ssh/config.\n"
+            "Use [bold]--user[/bold] ou adicione uma entrada 'User' no ~/.ssh/config para este host."
+        )
+        raise typer.Exit(1)
+
+    if not resolved_identity:
+        err_console.print(
+            "[red]Erro:[/red] Chave SSH não informada e não encontrada em ~/.ssh/config.\n"
+            "Use [bold]--identity[/bold] ou adicione 'IdentityFile' no ~/.ssh/config para este host."
+        )
+        raise typer.Exit(1)
+
+    identity_path = Path(resolved_identity).expanduser()
     if not identity_path.exists():
         err_console.print(f"[red]Erro:[/red] Chave privada não encontrada: {identity_path}")
         raise typer.Exit(1)
-    return SSHConnection(host=host, port=port, user=user, identity_file=str(identity_path), timeout=timeout)
+
+    if cfg.hostname and host != cfg.hostname:
+        console.print(f"[dim]SSH config: {host} → {cfg.hostname}[/dim]")
+
+    return SSHConnection(
+        host=resolved_host,
+        port=resolved_port,
+        user=resolved_user,
+        identity_file=str(identity_path),
+        timeout=timeout,
+    )
 
 
 def _run_scan(connection: SSHConnection, scan_type: str, scanners: list) -> Report:
@@ -115,9 +153,9 @@ def _output_report(report: Report, fmt: str, output: str | None) -> None:
 @app.command()
 def quick(
     host: HostOpt,
-    user: UserOpt,
-    identity: IdentityOpt,
-    port: PortOpt = 22,
+    user: UserOpt = None,
+    identity: IdentityOpt = None,
+    port: PortOpt = None,
     timeout: TimeoutOpt = 30,
     fmt: FormatOpt = "text",
     output: OutputOpt = None,
@@ -138,9 +176,9 @@ def quick(
 @app.command()
 def deep(
     host: HostOpt,
-    user: UserOpt,
-    identity: IdentityOpt,
-    port: PortOpt = 22,
+    user: UserOpt = None,
+    identity: IdentityOpt = None,
+    port: PortOpt = None,
     timeout: TimeoutOpt = 30,
     fmt: FormatOpt = "text",
     output: OutputOpt = None,
@@ -161,9 +199,9 @@ def deep(
 @app.command()
 def doctor(
     host: HostOpt,
-    user: UserOpt,
-    identity: IdentityOpt,
-    port: PortOpt = 22,
+    user: UserOpt = None,
+    identity: IdentityOpt = None,
+    port: PortOpt = None,
     timeout: TimeoutOpt = 10,
 ) -> None:
     """Testa conectividade SSH e valida as credenciais."""
