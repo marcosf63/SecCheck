@@ -1,6 +1,6 @@
 # SecCheck
 
-CLI de auditoria remota de segurança Linux via SSH. Coleta sinais de comprometimento, gera score de risco e produz relatório estruturado — pronto para consumo por LLMs e agentes.
+CLI de auditoria remota de segurança Linux via SSH. Coleta dados do servidor e produz relatório estruturado — pronto para consumo por LLMs e agentes.
 
 ## Instalação
 
@@ -41,25 +41,26 @@ sec-check deep \
   --output report.json
 ```
 
+### Usando ~/.ssh/config
+
+`--user`, `--identity` e `--port` são opcionais quando o host está configurado em `~/.ssh/config`. Flags da CLI sempre têm prioridade sobre o config file.
+
+```bash
+# Se "meu-servidor" estiver no ~/.ssh/config com User e IdentityFile definidos:
+sec-check quick --host meu-servidor
+```
+
 ## Opções globais
 
 | Opção | Padrão | Descrição |
 |---|---|---|
-| `--host` | — | Host ou IP do servidor remoto |
-| `--user` | — | Usuário SSH |
-| `--identity` | — | Caminho da chave privada SSH |
-| `--port` | `22` | Porta SSH |
+| `--host` | — | Host, IP ou alias do `~/.ssh/config` |
+| `--user` | — | Usuário SSH (usa `~/.ssh/config` se omitido) |
+| `--identity` | — | Chave privada SSH (usa `~/.ssh/config` se omitido) |
+| `--port` | `22` | Porta SSH (usa `~/.ssh/config` se omitido) |
 | `--timeout` | `30` | Timeout da conexão (segundos) |
 | `--format` | `text` | Formato de saída: `text`, `json`, `llm-json` |
 | `--output` | — | Arquivo de saída (opcional) |
-
-## Score de risco
-
-| Score | Status |
-|---|---|
-| 0–30 | SAFE |
-| 31–70 | SUSPICIOUS |
-| 71–100 | COMPROMISED |
 
 ## Scanners
 
@@ -71,6 +72,11 @@ sec-check deep \
 
 ### Deep scan (inclui quick +)
 - Chaves SSH autorizadas
+- Configuração do sshd (`/etc/ssh/sshd_config`)
+- Status do firewall (UFW / iptables)
+- Fail2ban: status e jails ativos
+- Docker: containers, volumes, redes e containers privilegiados
+- Logs de autenticação: logins aceitos, falhas e uso de sudo (janela de 48h)
 - Crontabs e agendamentos
 - Timers e serviços systemd
 - Arquivos em diretórios suspeitos (`/tmp`, `/dev/shm`, `/var/tmp`)
@@ -88,10 +94,10 @@ uv run pytest
 app/
 ├── cli.py            # Comandos Typer (quick, deep, doctor)
 ├── main.py           # Entry point
-├── models/           # Pydantic: SSHConnection, Finding, ScanResult, Report
+├── models/           # Pydantic: SSHConnection, ScanResult, Report
 ├── ssh/              # SSHClient, RemoteExecutor, erros
 ├── scanners/         # Módulos de coleta (1 por domínio)
-├── analyzers/        # Heurísticas, scoring, normalizer
-└── reporters/        # text, json, llm-json
+├── reporters/        # text, json, llm-json
+└── utils/            # ssh_config: resolução de ~/.ssh/config
 tests/                # pytest
 ```
