@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+wheels/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+.uv/
+
+# Pytest / cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Relatórios gerados
+*.report.json
+report.json
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / chaves SSH (nunca versionar)
+*.pem
+*.key
+id_rsa
+id_ed25519
+id_ecdsa
