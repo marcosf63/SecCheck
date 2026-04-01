@@ -121,13 +121,97 @@ def print_report(report: Report) -> None:
                     t.add_row(item)
                 console.print(t)
 
+    # SSH config
+    sshd = sections.get("sshd_config", {})
+    if isinstance(sshd, dict) and sshd:
+        t = Table(title="Configuração sshd", box=box.SIMPLE_HEAD)
+        t.add_column("Parâmetro")
+        t.add_column("Valor")
+        for k, v in sshd.items():
+            t.add_row(k, v)
+        console.print(t)
+
+    # Firewall
+    firewall = sections.get("firewall", {})
+    if isinstance(firewall, dict):
+        ufw = firewall.get("ufw", {})
+        if ufw.get("available"):
+            console.print(Panel(ufw.get("output", ""), title="UFW", box=box.SIMPLE))
+        ipt = firewall.get("iptables", {})
+        if ipt.get("available") and not ufw.get("available"):
+            console.print(Panel(ipt.get("output", ""), title="iptables", box=box.SIMPLE))
+
+    # Fail2Ban
+    f2b = sections.get("fail2ban", {})
+    if isinstance(f2b, dict) and f2b.get("available"):
+        jails = f2b.get("jail_list", [])
+        t = Table(title=f"Fail2Ban — jails ({len(jails)})", box=box.SIMPLE_HEAD)
+        t.add_column("Jail")
+        t.add_column("Detalhes", overflow="fold")
+        for jail in jails:
+            t.add_row(jail, f2b.get("jails", {}).get(jail, ""))
+        console.print(t)
+    elif isinstance(f2b, dict) and not f2b.get("available"):
+        console.print("  [dim]fail2ban: não instalado[/dim]")
+
+    # Docker
+    docker = sections.get("docker", {})
+    if isinstance(docker, dict) and docker.get("available"):
+        containers = docker.get("containers", [])
+        if containers:
+            console.print(_table(
+                f"Containers Docker ({len(containers)})",
+                containers,
+                ["id", "name", "image", "status", "ports"],
+            ))
+        priv = docker.get("privileged_check", "")
+        if priv:
+            console.print(Panel(priv, title="Privileged check", box=box.SIMPLE))
+    elif isinstance(docker, dict) and not docker.get("available"):
+        console.print("  [dim]docker: não instalado[/dim]")
+
+    # Auth Logs
+    auth = sections.get("auth_logs", {})
+    if isinstance(auth, dict):
+        history = auth.get("login_history", [])
+        if history:
+            t = Table(title=f"Histórico de logins (last)", box=box.SIMPLE_HEAD)
+            t.add_column("entrada", overflow="fold")
+            for line in history[:20]:
+                t.add_row(line)
+            console.print(t)
+
+        accepted = auth.get("successful_logins", [])
+        if accepted:
+            t = Table(title=f"Logins aceitos — últimas 48h ({len(accepted)})", box=box.SIMPLE_HEAD)
+            t.add_column("entrada", overflow="fold")
+            for line in accepted:
+                t.add_row(line)
+            console.print(t)
+
+        failed = auth.get("failed_attempts", [])
+        if failed:
+            t = Table(title=f"Falhas de autenticação — últimas 48h ({len(failed)})", box=box.SIMPLE_HEAD)
+            t.add_column("entrada", overflow="fold")
+            for line in failed:
+                t.add_row(line)
+            console.print(t)
+
+        sudo_usage = auth.get("sudo_usage", [])
+        if sudo_usage:
+            t = Table(title=f"Uso de sudo — últimas 48h ({len(sudo_usage)})", box=box.SIMPLE_HEAD)
+            t.add_column("entrada", overflow="fold")
+            for line in sudo_usage:
+                t.add_row(line)
+            console.print(t)
+
     # Rootkits
     rootkits = sections.get("rootkits", {})
     if isinstance(rootkits, dict):
         for tool, data in rootkits.items():
             if data.get("available"):
                 output = data.get("output", "").strip()
-                label = f"[green]disponível[/green]" if not output else f"[yellow]saída abaixo[/yellow]"
+                label = "[green]disponível[/green]" if not output else "[yellow]saída abaixo[/yellow]"
                 console.print(f"  {tool}: {label}")
                 if output:
                     console.print(f"[dim]{output}[/dim]")
