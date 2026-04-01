@@ -1,8 +1,7 @@
 import json
 import pytest
 
-from app.models.report import Report, ReportMetadata, RiskSummary, TargetInfo
-from app.models.finding import Finding, Evidence
+from app.models.report import Report, ReportMetadata, TargetInfo
 from app.reporters.llm_reporter import to_llm_json
 from app.reporters.json_reporter import to_json
 
@@ -15,45 +14,38 @@ def sample_report():
             target=TargetInfo(host="10.0.0.1", port=22, user="ubuntu"),
             timestamp="2026-04-01T10:00:00Z",
         ),
-        summary=RiskSummary(risk_score=78, status="COMPROMISED", confidence="high"),
-        findings=[
-            Finding(
-                id="proc_tmp_exec",
-                severity="high",
-                category="process",
-                title="Processo executando em diretório suspeito",
-                evidence=Evidence(command="ps aux", match="/tmp/.x123/agent"),
-                reasoning="Processos em /tmp são suspeitos.",
-                score_contribution=20,
-            ),
-            Finding(
-                id="ssh_unknown_key",
-                severity="high",
-                category="ssh",
-                title="Chave SSH desconhecida",
-                evidence=Evidence(file="/root/.ssh/authorized_keys", match="ssh-ed25519 AAAAC3..."),
-                reasoning="Chave não reconhecida.",
-                score_contribution=30,
-            ),
-        ],
-        recommended_actions=["Isolar a máquina", "Revisar chaves SSH"],
-        raw_sections={"processes": [], "network": []},
+        sections={
+            "processes": [
+                {"user": "root", "pid": "1", "cpu": "0.0", "mem": "0.1", "command": "/sbin/init"},
+                {"user": "www-data", "pid": "999", "cpu": "0.1", "mem": "0.5", "command": "/usr/sbin/nginx"},
+            ],
+            "network": {
+                "ports": [{"proto": "tcp", "state": "LISTEN", "local_address": "0.0.0.0:22", "process": "sshd"}],
+                "connections": [],
+            },
+            "ssh_keys": [
+                {"path": "/root/.ssh/authorized_keys", "key_type": "ssh-ed25519", "key": "AAAAC3...", "comment": "user@host"},
+            ],
+        },
     )
 
 
 class TestLLMReporter:
     def test_output_is_valid_json(self, sample_report):
-        output = to_llm_json(sample_report)
-        data = json.loads(output)
+        data = json.loads(to_llm_json(sample_report))
         assert isinstance(data, dict)
 
     def test_has_required_top_level_keys(self, sample_report):
         data = json.loads(to_llm_json(sample_report))
         assert "metadata" in data
-        assert "summary" in data
-        assert "findings" in data
-        assert "recommended_actions" in data
-        assert "raw_sections" in data
+        assert "sections" in data
+
+    def test_no_score_or_findings(self, sample_report):
+        data = json.loads(to_llm_json(sample_report))
+        assert "summary" not in data
+        assert "findings" not in data
+        assert "recommended_actions" not in data
+        assert "risk_score" not in str(data)
 
     def test_metadata_fields(self, sample_report):
         data = json.loads(to_llm_json(sample_report))
@@ -64,46 +56,31 @@ class TestLLMReporter:
         assert meta["target"]["port"] == 22
         assert meta["target"]["user"] == "ubuntu"
 
-    def test_summary_fields(self, sample_report):
+    def test_sections_contain_raw_data(self, sample_report):
         data = json.loads(to_llm_json(sample_report))
-        summary = data["summary"]
-        assert summary["risk_score"] == 78
-        assert summary["status"] == "COMPROMISED"
-        assert summary["confidence"] == "high"
+        assert "processes" in data["sections"]
+        assert len(data["sections"]["processes"]) == 2
+        assert "network" in data["sections"]
+        assert "ssh_keys" in data["sections"]
 
-    def test_findings_structure(self, sample_report):
-        data = json.loads(to_llm_json(sample_report))
-        assert len(data["findings"]) == 2
-        f = data["findings"][0]
-        assert "id" in f
-        assert "severity" in f
-        assert "category" in f
-        assert "title" in f
-        assert "evidence" in f
-        assert "reasoning" in f
-        # score_contribution não deve aparecer no LLM reporter
-        assert "score_contribution" not in f
-
-    def test_evidence_has_no_null_values(self, sample_report):
-        data = json.loads(to_llm_json(sample_report))
-        for finding in data["findings"]:
-            for v in finding["evidence"].values():
-                assert v is not None
-
-    def test_recommended_actions(self, sample_report):
-        data = json.loads(to_llm_json(sample_report))
-        assert "Isolar a máquina" in data["recommended_actions"]
-
-    def test_json_reporter_includes_score_contribution(self, sample_report):
-        data = json.loads(to_json(sample_report))
-        assert data["findings"][0]["score_contribution"] == 20
+    def test_save_llm_to_file(self, sample_report, tmp_path):
+        from app.reporters.llm_reporter import save_llm_json
+        path = str(tmp_path / "report.json")
+        save_llm_json(sample_report, path)
+        with open(path) as f:
+            data = json.load(f)
+        assert "sections" in data
 
 
 class TestJSONReporter:
     def test_valid_json(self, sample_report):
-        output = to_json(sample_report)
-        data = json.loads(output)
-        assert data["summary"]["risk_score"] == 78
+        data = json.loads(to_json(sample_report))
+        assert "metadata" in data
+        assert "sections" in data
+
+    def test_no_score(self, sample_report):
+        data = json.loads(to_json(sample_report))
+        assert "summary" not in data
 
     def test_save_to_file(self, sample_report, tmp_path):
         from app.reporters.json_reporter import save_json
@@ -111,12 +88,4 @@ class TestJSONReporter:
         save_json(sample_report, path)
         with open(path) as f:
             data = json.load(f)
-        assert data["summary"]["status"] == "COMPROMISED"
-
-    def test_save_llm_to_file(self, sample_report, tmp_path):
-        from app.reporters.llm_reporter import save_llm_json
-        path = str(tmp_path / "llm_report.json")
-        save_llm_json(sample_report, path)
-        with open(path) as f:
-            data = json.load(f)
-        assert "findings" in data
+        assert data["metadata"]["target"]["host"] == "10.0.0.1"
